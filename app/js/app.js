@@ -1,119 +1,145 @@
-let currentRecordId, triggeredByUser, application_stage, application_id = null;
+let currentRecordId, triggeredByUser, application_stage = null;
 let isValidForResend = false;
-let validationMessage = "";
 
 const SELECTORS = {
-  popup: "popup",
-  popupTitle: "popupTitle",
-  popupMessage: "popupMessage",
+    popup: "popup",
+    popupTitle: "popupTitle",
+    popupMessage: "popupMessage",
+    mainTitle: "main-title",
+    loaderText: "loader-text"
 };
 
-ZOHO.embeddedApp.on("PageLoad", async (e) => { 
-    if(e && e.EntityId){
-        currentRecordId = e.EntityId[0]; 
-    }
-
-    // get the current record to get the app record
-    const record_response = await ZOHO.CRM.API.getRecord({ Entity: "Company_Members", approved: "both", RecordID: currentRecordId,});
-    const record_data = record_response.data[0];
-
-    application_id = record_data.Application_No.id;
-
-    // application record to validate application stage
-    const application_rseponse = await ZOHO.CRM.API.getRecord({ Entity: "Applications1", approved: "both", RecordID: application_id,});
-    const application_data = application_rseponse.data[0];
-    application_stage = application_data.New_Resident_Visa_Stage;
-
-    const allowedStages = ["Start", "Docs Sent for Signing", "Submitted to Authority"];
-    if (allowedStages.includes(application_stage)) {
-        isValidForResend = true;
-    } else {
-        validationMessage = `Removal of Company Member and Compliance is only allowed when Application Stage is ${allowedStages.join(", ")}`;
-    }
-
-
-    const userInfo = await ZOHO.CRM.CONFIG.getCurrentUser();
-    triggeredByUser = userInfo.users[0].full_name;
-    console.log("Triggered by:", triggeredByUser);
-
-    ZOHO.CRM.UI.Resize({ height: "30%" }).then(function (data) {
-      console.log("Resize result:", data);
-    });
+ZOHO.embeddedApp.on("PageLoad", async function (e) {
+    await initializeWidget(e);
 });
 
-function showPopup(message, type = "restricted") {
-  const popup = document.getElementById(SELECTORS.popup);
-  popup.classList.remove("hidden");
-  popup.classList.toggle("success", type === "success");
-  popup.classList.toggle("restricted", type !== "success");
-  document.getElementById(SELECTORS.popupTitle).textContent = "Action Status";
-  document.getElementById(SELECTORS.popupMessage).innerHTML = message;
+ZOHO.embeddedApp.init();
+
+async function initializeWidget(e) {
+    try {
+        if (e && e.EntityId) {
+            currentRecordId = e.EntityId[0];
+        } else {
+            const pageInfo = await ZOHO.CRM.INTERACTION.getPageInfo();
+            currentRecordId = pageInfo.recordId;
+        }
+
+        if (!currentRecordId) throw new Error("Unable to identify Record ID.");
+
+        const record_response = await ZOHO.CRM.API.getRecord({ 
+            Entity: "Company_Members", 
+            approved: "both", 
+            RecordID: currentRecordId 
+        });
+
+        if (!record_response || !record_response.data) throw new Error("Record not found.");
+        
+        const record_data = record_response.data[0];
+        application_stage = record_data.Application_Stage;
+
+        validateStage(application_stage);
+
+        if (!isValidForResend) {
+            showPopup("Action Restricted", "At this stage of the application, you can no longer remove a Company Member. Please coordinate with the CRM Team.", "restricted");
+            document.getElementById("form-content").style.display = "none";
+        }
+
+        const userInfo = await ZOHO.CRM.CONFIG.getCurrentUser();
+        triggeredByUser = userInfo.users[0].full_name;
+
+        ZOHO.CRM.UI.Resize({ height: "450", width: "550" });
+
+    } catch (err) {
+        showPopup("Data Fetch Error", err.message, "restricted");
+    }
+}
+
+function validateStage(stage) {
+    const allowedStages = [
+        "Start", 
+        "Docs Sent for Signing", 
+        "Submitted to Authority", 
+        "KYB and KYC Forms Sent"
+    ];
+    isValidForResend = allowedStages.includes(stage);
+}
+
+function showPopup(titleText, message, type = "restricted") {
+    const popup = document.getElementById(SELECTORS.popup);
+    const iconDiv = document.getElementById("statusIcon");
+    const title = document.getElementById(SELECTORS.popupTitle);
+    const msg = document.getElementById(SELECTORS.popupMessage);
+    
+    popup.classList.remove("hidden");
+    title.textContent = titleText;
+    msg.innerHTML = message;
+    
+    if(type === "success") {
+        popup.setAttribute("data-status", "success");
+        iconDiv.className = "mx-auto flex items-center justify-center h-16 w-16 rounded-full mb-4 bg-green-50 text-green-500 ring-8 ring-green-50/50";
+        iconDiv.innerHTML = '<svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>';
+    } else {
+        popup.setAttribute("data-status", "error");
+        iconDiv.className = "mx-auto flex items-center justify-center h-16 w-16 rounded-full mb-4 bg-amber-50 text-amber-500 ring-8 ring-amber-50/50";
+        iconDiv.innerHTML = '<svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>';
+    }
 }
 
 function hidePopup() {
     const popup = document.getElementById("popup");
-    popup.classList.add("hidden");
-    popup.classList.remove("success", "restricted");
-    const targetUrl = "https://crm.zoho.com/crm/org682300086/tab/CustomModule32/custom-view/3769920000139267496/list";
-    window.top.location.href = targetUrl;
+    const isSuccess = popup.getAttribute("data-status") === "success";
+    
+    if (isSuccess) {
+        let target_url = "https://crm.zoho.com/crm/org682300086/tab/CustomModule32/" + currentRecordId;
+        window.top.location.href = target_url;
+    } else {
+        ZOHO.CRM.UI.Popup.close();
+    }
 }
 
 async function delete_record(event) {
     event.preventDefault();
+    if (!isValidForResend) return;
 
     const reasonInput = document.getElementById("reason");
     const errorSpan = document.getElementById("reason-error");
     const loader = document.getElementById("loader-overlay");
-    const reason_for_delete = reasonInput.value.trim();
+    const submitBtn = event.submitter;
 
-    reasonInput.classList.remove("input-error");
-    errorSpan.style.display = "none";
+    reasonInput.classList.remove("border-red-500", "ring-red-100", "ring-2");
+    errorSpan.classList.add("hidden");
 
-    if (!reason_for_delete) {
-        reasonInput.classList.add("input-error");
-        errorSpan.innerText = "Please provide a reason for deletion.";
-        errorSpan.style.display = "block";
+    if (!reasonInput.value.trim()) {
+        reasonInput.classList.add("border-red-500", "ring-red-100", "ring-2");
+        errorSpan.textContent = "Please provide a reason for deletion.";
+        errorSpan.classList.remove("hidden");
         return;
     }
 
-    if (!isValidForResend) {
-        reasonInput.classList.add("input-error");
-        errorSpan.innerHTML =`${validationMessage}`;
-        errorSpan.style.display = "block";
-        return;
-    }
-
-    loader.style.display = "flex";
-
-    // Function Display Name: Delete CM and Compliance
-    // Associated function Display Name and API Name: Dev Remove Company Members and Compliance, dev_remove_company_members_and_compliance
-    const func_name = "delete_cm_and_compliance";
-    const req_data = {
-        "arguments": JSON.stringify({
-            "cm_id": currentRecordId,
-            "notes": reason_for_delete,
-            "triggered_by": triggeredByUser
-        })
-    };
+    submitBtn.disabled = true;
+    loader.classList.replace("hidden", "flex");
 
     try {
-        const response = await ZOHO.CRM.FUNCTIONS.execute(func_name, req_data);
-        console.log("Response:", response);
+        const response = await ZOHO.CRM.FUNCTIONS.execute("delete_cm_and_compliance", {
+            "arguments": JSON.stringify({
+                "cm_id": currentRecordId,
+                "notes": reasonInput.value.trim(),
+                "triggered_by": triggeredByUser
+            })
+        });
 
-       if (response && response.code === "success") {
-           showPopup("Company Member and associated Compliance record has been removed successfully", "success");
+        loader.classList.replace("flex", "hidden");
+
+        if (response && response.code === "success") {
+            showPopup("Removal Successful", "The Company Member was successfully removed. Please click the Close button below.", "success");
         } else {
-            throw new Error("Function returned an error: " + response.code);
+            throw new Error(response.code || "Function error");
         }
-       
     } catch (error) {
-        console.error("Error:", error);
-        loader.style.display = "none";
-        alert("Execution failed. Please check your connection.");
+        loader.classList.replace("flex", "hidden");
+        submitBtn.disabled = false;
+        showPopup("Execution Failed", error.message, "restricted");
     }
 }
 
 document.getElementById("record-form").addEventListener("submit", delete_record);
-
-ZOHO.embeddedApp.init();
-
