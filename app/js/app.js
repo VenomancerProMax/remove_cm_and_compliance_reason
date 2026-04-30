@@ -56,6 +56,9 @@ async function initializeWidget(e) {
 
 function validateStage(stage) {
     const allowedStages = [
+        null,
+        "null",
+        "", 
         "Start", 
         "Docs Sent for Signing", 
         "Submitted to Authority", 
@@ -120,14 +123,16 @@ async function delete_record(event) {
     loader.classList.replace("hidden", "flex");
 
     try {
+        const payload = {
+            "cm_id": currentRecordId,
+            "notes": reasonInput.value.trim(),
+            "triggered_by": triggeredByUser
+        };
+        console.log("Executing 'delete_cm_and_compliance' with arguments:", payload);
         const response = await ZOHO.CRM.FUNCTIONS.execute("delete_cm_and_compliance", {
-            "arguments": JSON.stringify({
-                "cm_id": currentRecordId,
-                "notes": reasonInput.value.trim(),
-                "triggered_by": triggeredByUser
-            })
+            "arguments": JSON.stringify(payload) 
         });
-
+        console.log("Delete Company Member Response:", response);
         loader.classList.replace("flex", "hidden");
 
         if (response && response.code === "success") {
